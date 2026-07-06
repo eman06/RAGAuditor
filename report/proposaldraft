@@ -1,0 +1,1234 @@
+Research Proposal
+Title
+Selective Claim-Level Auditing for Detecting Unsupported Claims in Retrieval-Augmented Generation
+Alternative project name:
+RAGGuard-Lite: A Runtime Claim-Level Auditor for Evidence-Grounded RAG Answers
+________________________________________
+1. Problem Statement
+Retrieval-Augmented Generation systems are widely used to answer questions over documents, policies, PDFs, manuals, websites, and enterprise knowledge bases. In theory, RAG should reduce hallucination because the model receives retrieved evidence before generating an answer. In practice, RAG systems still produce answers that contain unsupported claims, partially supported claims, contradictions, outdated information, or claims that go beyond the retrieved context.
+Most RAG evaluation systems produce answer-level or pipeline-level scores such as faithfulness, relevance, context precision, or answer correctness. These scores are useful for benchmarking, but they are not always actionable for a real user or developer. If a RAG answer is risky, the user needs to know which exact claim is unsupported and which evidence span was used to judge it.
+This project proposes a claim-level auditing system that takes a user question, retrieved context chunks, and a generated RAG answer, then identifies atomic claims, retrieves the most relevant evidence span for each claim, verifies whether each claim is supported, and produces an answer-level hallucination risk score.
+________________________________________
+2. Core Research Gap
+Existing RAG evaluation systems can detect or estimate hallucination, but many of them either:
+1.	evaluate the answer as a whole,
+2.	rely on scalar faithfulness scores,
+3.	require reference answers,
+4.	do not localize unsupported claims clearly,
+5.	do not separate decomposition quality from verification quality,
+6.	are expensive if every sentence is decomposed and judged by a large LLM,
+7.	do not provide a simple runtime audit report for each claim.
+The proposed research gap is:
+Existing RAG evaluation approaches do not sufficiently study whether selectively decomposing only complex answer sentences into atomic claims can improve unsupported-claim detection while reducing verification cost compared to full decomposition.
+This gives the project a narrow and measurable contribution.
+________________________________________
+3. Main Research Question
+Does selective claim decomposition improve claim-level hallucination detection in RAG answers compared to sentence-level verification and full atomic decomposition?
+________________________________________
+4. Secondary Research Questions
+RQ1
+Does selective claim decomposition improve unsupported-claim detection compared to verifying complete sentences directly?
+RQ2
+Does selective decomposition reduce cost compared to decomposing every sentence into atomic claims?
+RQ3
+Does claim-level evidence-span retrieval improve support classification compared to verifying claims against the full retrieved context?
+RQ4
+Can claim-level support labels be aggregated into an answer-level risk score that predicts whether a RAG answer is hallucinated?
+________________________________________
+5. Proposed Contribution
+The project contributes a lightweight auditing pipeline with four main components:
+1.	Selective Claim Decomposition
+o	Only complex sentences are decomposed into smaller atomic claims.
+o	Simple factual sentences are preserved as single claims.
+o	This reduces unnecessary claim splitting, lowers LLM cost, and avoids noisy over-decomposition.
+2.	Evidence-Span Retrieval
+o	Retrieved RAG chunks are further split into smaller evidence units.
+o	Each claim is matched with its most relevant evidence spans using hybrid sparse and dense retrieval.
+3.	Grounded Claim Verification
+o	Each claim-evidence pair is classified as supported, partially supported, unsupported, or contradicted.
+o	A compact verifier is used first.
+o	A stronger LLM judge is only used for uncertain cases.
+4.	Answer-Level Risk Aggregation
+o	Claim-level labels are aggregated into a final answer risk score.
+o	The output is explainable because each risk score is traceable to specific unsupported claims.
+________________________________________
+6. What the System Does Not Do
+To keep the project realistic and defensible, the first version will not build:
+•	a new RAG chatbot,
+•	a new retriever,
+•	a new large language model,
+•	a full answer rewriting system,
+•	a correction engine,
+•	a browser-based search system,
+•	a large human-labeled dataset from scratch.
+The system audits already-generated RAG answers.
+________________________________________
+7. System Input and Output
+Input
+{
+  "question": "What benefits does the company policy provide to full-time employees?",
+  "retrieved_chunks": [
+    "Chunk 1 text...",
+    "Chunk 2 text...",
+    "Chunk 3 text..."
+  ],
+  "generated_answer": "The policy gives full-time employees health insurance, paid leave, and remote work benefits."
+}
+Output
+{
+  "answer_risk_score": 0.42,
+  "risk_level": "MEDIUM",
+  "claims": [
+    {
+      "claim": "The policy gives full-time employees health insurance.",
+      "label": "SUPPORTED",
+      "confidence": 0.91,
+      "evidence": "Full-time employees are eligible for health insurance..."
+    },
+    {
+      "claim": "The policy gives full-time employees paid leave.",
+      "label": "SUPPORTED",
+      "confidence": 0.87,
+      "evidence": "Employees receive annual paid leave..."
+    },
+    {
+      "claim": "The policy gives full-time employees remote work benefits.",
+      "label": "UNSUPPORTED",
+      "confidence": 0.78,
+      "evidence": "No retrieved evidence found."
+    }
+  ]
+}
+________________________________________
+8. End-to-End Pipeline
+Stage 1: Data Loading
+The system loads examples from RAG hallucination and attribution datasets.
+Each example is normalized into the following schema:
+{
+  "id": "example_id",
+  "question": "user question",
+  "contexts": ["retrieved chunk 1", "retrieved chunk 2"],
+  "answer": "generated answer",
+  "answer_label": "faithful / hallucinated",
+  "claim_annotations": [],
+  "span_annotations": []
+}
+________________________________________
+Stage 2: Sentence Segmentation
+The generated answer is split into sentences.
+Example:
+The company was founded in 2015. It raised $20 million in 2021 and expanded into Germany and France.
+Output:
+[
+  "The company was founded in 2015.",
+  "It raised $20 million in 2021 and expanded into Germany and France."
+]
+Implementation:
+•	Use spaCy sentence segmentation.
+•	Alternative: NLTK Punkt tokenizer.
+•	Store sentence boundaries for later mapping back to the original answer.
+________________________________________
+Stage 3: Selective Claim Decomposition
+Each sentence is classified as either:
+SIMPLE
+COMPLEX
+Simple sentences are kept as one claim.
+Complex sentences are decomposed into multiple atomic claims.
+A sentence is marked complex if it contains:
+•	multiple named entities,
+•	multiple numbers,
+•	multiple dates,
+•	conjunctions such as “and”, “but”, “while”, “although”,
+•	causal terms such as “because”, “therefore”, “as a result”,
+•	comparison terms such as “higher than”, “lower than”, “more than”,
+•	list-like structure,
+•	multiple factual predicates.
+Example:
+The company was founded in 2015, raised $20 million in 2021, and expanded into Germany and France.
+Atomic claims:
+[
+  "The company was founded in 2015.",
+  "The company raised $20 million in 2021.",
+  "The company expanded into Germany.",
+  "The company expanded into France."
+]
+Implementation method:
+1.	Rule-based complexity detector.
+2.	LLM-based claim splitter only for complex sentences.
+3.	No LLM call for simple sentences.
+This is the central contribution.
+________________________________________
+Stage 4: Claim Decontextualization
+Some claims contain pronouns or references that cannot be verified independently.
+Bad claim:
+It expanded into Germany.
+Good claim:
+The company expanded into Germany.
+The system rewrites claims into self-contained form using the original question and answer as context.
+Implementation:
+•	Use a small LLM prompt.
+•	Keep the rewritten claim semantically equivalent to the original.
+•	Do not add new facts.
+Prompt template:
+You are given a question, an answer sentence, and an extracted claim.
+Rewrite the claim so it is self-contained.
+Do not add new information.
+Do not change the meaning.
+Return only the rewritten claim.
+
+Question:
+{question}
+
+Answer sentence:
+{sentence}
+
+Claim:
+{claim}
+________________________________________
+Stage 5: Evidence Unit Creation
+Retrieved chunks may be long. Verifying a claim against a long chunk can confuse the verifier. Therefore, chunks are split into smaller evidence units.
+Evidence units can be:
+•	individual sentences,
+•	two-sentence windows,
+•	three-sentence sliding windows,
+•	paragraph-level spans.
+Recommended first version:
+2-sentence sliding windows
+Example:
+[
+  {
+    "chunk_id": 1,
+    "span_id": "1_0",
+    "text": "Full-time employees are eligible for health insurance. Coverage begins after probation."
+  }
+]
+________________________________________
+Stage 6: Evidence Retrieval for Each Claim
+For every claim, retrieve the top-k evidence spans.
+Use hybrid retrieval:
+hybrid_score = 0.5 * BM25_score + 0.5 * dense_embedding_score
+Recommended tools:
+•	BM25: rank_bm25
+•	Dense embeddings: sentence-transformers
+•	Embedding model: all-MiniLM-L6-v2 for MVP
+•	Better model later: bge-small-en-v1.5 or bge-base-en-v1.5
+Output:
+{
+  "claim": "The company raised $20 million in 2021.",
+  "top_evidence": [
+    {
+      "span": "The company closed a $20 million Series A round in 2021.",
+      "score": 0.87
+    }
+  ]
+}
+________________________________________
+Stage 7: Claim Verification
+Each claim is verified against its top evidence spans.
+Labels:
+SUPPORTED
+PARTIALLY_SUPPORTED
+UNSUPPORTED
+CONTRADICTED
+For the easiest implementation, use binary labels first:
+SUPPORTED
+UNSUPPORTED
+Then extend to four labels later.
+Recommended MVP verifier:
+•	MiniCheck if available and easy to run.
+•	Otherwise use DeBERTa-v3-large-MNLI or RoBERTa-large-MNLI.
+•	Optional LLM judge for uncertain examples.
+Input format:
+Evidence:
+{evidence_span}
+
+Claim:
+{claim}
+
+Question:
+{question}
+
+Determine whether the evidence supports the claim.
+For NLI-based verifier:
+premise = evidence_span
+hypothesis = claim
+Mapping:
+entailment -> SUPPORTED
+neutral -> UNSUPPORTED
+contradiction -> CONTRADICTED
+Partial support can be added later using an LLM judge or threshold rules.
+________________________________________
+Stage 8: Uncertainty-Based LLM Fallback
+Do not call an LLM for every claim. That makes the system expensive and weakens the cost argument.
+Use an LLM only when the verifier confidence is uncertain.
+Example rule:
+if 0.40 <= confidence <= 0.70:
+    use_llm_judge = True
+else:
+    use_llm_judge = False
+LLM judge prompt:
+You are checking whether a RAG answer claim is supported by the retrieved evidence.
+
+Question:
+{question}
+
+Claim:
+{claim}
+
+Evidence:
+{evidence}
+
+Choose one label:
+SUPPORTED - the evidence fully supports the claim.
+PARTIALLY_SUPPORTED - the evidence supports part of the claim but not all of it.
+UNSUPPORTED - the evidence does not support the claim.
+CONTRADICTED - the evidence contradicts the claim.
+
+Return JSON only:
+{
+  "label": "...",
+  "reason": "short reason"
+}
+________________________________________
+Stage 9: Answer-Level Risk Aggregation
+After all claims are labeled, calculate the answer-level hallucination risk.
+Simple formula:
+risk_score =
+0.45 * unsupported_claim_ratio
++ 0.30 * contradicted_claim_ratio
++ 0.15 * partial_support_ratio
++ 0.10 * average_uncertainty
+Risk levels:
+0.00–0.25 = LOW
+0.26–0.50 = MEDIUM
+0.51–0.75 = HIGH
+0.76–1.00 = CRITICAL
+Later improvement:
+Train logistic regression using features:
+unsupported_ratio
+contradiction_ratio
+partial_support_ratio
+average_confidence
+number_of_claims
+average_evidence_similarity
+number_of_no-evidence claims
+LLM fallback rate
+Target:
+answer_label = faithful / hallucinated
+________________________________________
+Stage 10: Audit Report Generation
+Final report should include:
+answer risk score
+risk level
+total claims
+supported claims
+unsupported claims
+contradicted claims
+claim-by-claim evidence
+short explanation
+Example:
+Risk Level: HIGH
+
+The answer contains 5 claims.
+3 are supported.
+1 is unsupported.
+1 is contradicted.
+
+Unsupported claim:
+"The policy allows remote work for all employees."
+
+Reason:
+No retrieved evidence mentions remote work eligibility.
+________________________________________
+9. Datasets
+Primary Dataset 1: RAGTruth
+Use for:
+•	hallucination detection,
+•	answer-level labels,
+•	span-level hallucination mapping,
+•	evaluating whether claim-level labels align with hallucinated spans.
+Why useful:
+•	It is directly about RAG hallucination.
+•	It contains real generated RAG responses.
+•	It includes manually annotated hallucination information.
+How to use it:
+1.	Load question, retrieved context, and generated answer.
+2.	Use word-level hallucination annotations to infer whether extracted claims overlap hallucinated spans.
+3.	Mark a claim unsupported if a significant portion overlaps a hallucinated span.
+4.	Use answer-level labels for answer risk evaluation.
+Possible limitation:
+•	It may not provide clean atomic claim labels directly.
+•	You may need to convert word-level annotations into claim-level labels.
+________________________________________
+Primary Dataset 2: AttributionBench
+Use for:
+•	claim-level attribution classification,
+•	supported vs unsupported claim verification,
+•	evaluating whether evidence supports a claim.
+Why useful:
+•	It is directly aligned with your claim-verification task.
+•	It contains query, claim, evidence, and attribution labels.
+•	It is suitable for testing support classification.
+How to use it:
+1.	Use its claim-evidence pairs directly.
+2.	Train or evaluate claim verification models.
+3.	Use in-distribution and out-of-distribution splits if available.
+4.	Report macro-F1, supported F1, and unsupported F1.
+Possible limitation:
+•	It is more attribution-focused than full RAG auditing.
+•	It may not represent all RAG answer styles.
+________________________________________
+Primary Dataset 3: LLM-AggreFact / MiniCheck Benchmark
+Use for:
+•	grounded claim verification,
+•	comparing against compact fact-checking models,
+•	testing generalization beyond one dataset.
+Why useful:
+•	It is built for checking whether generated claims are grounded in evidence.
+•	It gives a strong baseline direction.
+•	It supports the cost-efficiency angle.
+How to use it:
+1.	Use claim-document pairs.
+2.	Evaluate the verifier module separately.
+3.	Compare against MiniCheck or NLI-based baselines.
+________________________________________
+Optional Dataset 4: GaRAGe
+Use only if time allows.
+Use for:
+•	grounding passage selection,
+•	long-form answer grounding,
+•	deflection when evidence is insufficient.
+Why useful:
+•	It is closer to real-world RAG.
+•	It contains grounding annotations.
+•	It tests whether models can identify relevant grounding passages.
+Why not use first:
+•	It adds complexity.
+•	It may slow down the MVP.
+•	It is better for extension after the core system works.
+________________________________________
+10. Final Dataset Plan
+MVP dataset setup
+Use:
+AttributionBench for claim-level verification
+RAGTruth for answer-level hallucination and span-level analysis
+MiniCheck / LLM-AggreFact for verifier benchmarking
+Minimum usable size
+Target:
+At least 1,000 claim-level examples
+At least 1,000 answer-level examples
+At least 100 manually inspected examples
+Manual audit subset
+Create a small manually checked set:
+100 answers
+300–500 extracted claims
+Manually label:
+claim quality
+claim support label
+evidence span correctness
+This is not your main dataset. It is for error analysis and validation.
+________________________________________
+11. Baselines
+Baseline 1: Whole-Answer LLM Judge
+Input:
+question + retrieved chunks + generated answer
+Output:
+faithful / hallucinated
+Purpose:
+•	Tests whether claim-level auditing is better than judging the full answer directly.
+________________________________________
+Baseline 2: Sentence-Level Verifier
+Input:
+full sentence + top evidence
+No claim decomposition.
+Purpose:
+•	Tests whether decomposition improves verification.
+________________________________________
+Baseline 3: Full Claim Decomposition
+Every sentence is decomposed into atomic claims.
+Purpose:
+•	Tests whether selective decomposition is cheaper and less noisy than full decomposition.
+________________________________________
+Baseline 4: RAGAS Faithfulness
+Use RAGAS faithfulness score.
+Purpose:
+•	Compare against a known RAG evaluation framework.
+________________________________________
+Baseline 5: MiniCheck Direct
+Use MiniCheck directly on claim-evidence pairs without your selective decomposition and evidence retrieval pipeline.
+Purpose:
+•	Tests whether your pipeline adds value beyond the verifier model.
+________________________________________
+Baseline 6: NLI Model
+Use an NLI model such as DeBERTa or RoBERTa.
+Purpose:
+•	Simple reproducible baseline.
+________________________________________
+12. Proposed Method Variants
+You need these variants for ablation.
+Variant A: Sentence-Level Only
+sentence -> evidence retrieval -> verifier -> risk score
+Variant B: Full Decomposition
+every sentence -> LLM decomposition -> evidence retrieval -> verifier -> risk score
+Variant C: Selective Decomposition
+complexity detector -> decompose only complex sentences -> evidence retrieval -> verifier -> risk score
+Variant D: Selective Decomposition Without Evidence Retrieval
+claims -> full context -> verifier
+Variant E: Selective Decomposition With BM25 Only
+claims -> BM25 evidence retrieval -> verifier
+Variant F: Selective Decomposition With Dense Retrieval Only
+claims -> embedding retrieval -> verifier
+Variant G: Full Proposed System
+selective decomposition -> hybrid evidence retrieval -> verifier -> LLM fallback -> risk calibration
+________________________________________
+13. Evaluation Metrics
+Claim-Level Metrics
+Use:
+precision
+recall
+F1
+macro-F1
+supported F1
+unsupported F1
+contradiction F1
+Most important:
+unsupported-claim F1
+macro-F1
+Reason:
+•	Unsupported claims are the main target.
+•	Macro-F1 prevents the model from looking good by only predicting the majority class.
+________________________________________
+Answer-Level Metrics
+Use:
+accuracy
+balanced accuracy
+F1
+AUROC
+AUPRC
+expected calibration error
+Most important:
+AUROC
+balanced accuracy
+Reason:
+•	The final system produces a risk score.
+•	AUROC tests whether higher risk corresponds to hallucinated answers.
+________________________________________
+Evidence Retrieval Metrics
+Use:
+Recall@1
+Recall@3
+MRR
+Reason:
+•	If the correct evidence is not retrieved, verification will fail.
+•	This lets you separate retrieval failure from verifier failure.
+________________________________________
+Cost Metrics
+Use:
+number of LLM calls per answer
+average tokens per answer
+average claims per answer
+latency per answer
+estimated API cost
+Most important:
+LLM calls per answer
+cost reduction vs full decomposition
+This supports the selective decomposition argument.
+________________________________________
+14. Hypotheses
+H1
+Selective claim decomposition will improve unsupported-claim F1 compared to sentence-level verification.
+H2
+Selective claim decomposition will achieve similar claim-level F1 to full decomposition while using fewer LLM calls.
+H3
+Hybrid evidence retrieval will improve claim verification compared to using the full retrieved context.
+H4
+Claim-level risk aggregation will produce better answer-level hallucination detection than a whole-answer judge or scalar faithfulness score.
+________________________________________
+15. Expected Results
+The project should aim for one of these defensible outcomes.
+Best outcome
+Selective decomposition improves unsupported-claim F1 by 3–5 points over sentence-level verification and reduces LLM calls by 30–50% compared to full decomposition.
+Acceptable outcome
+Selective decomposition performs similarly to full decomposition but uses significantly fewer LLM calls.
+Still publishable outcome
+Selective decomposition does not beat full decomposition, but error analysis shows when decomposition helps and when it hurts. The contribution becomes an empirical study of decomposition strategies for RAG hallucination auditing.
+Bad outcome
+Selective decomposition is worse than sentence-level verification and does not reduce cost meaningfully. In that case, the project must be reframed as an error analysis paper.
+________________________________________
+16. Implementation Details
+Recommended Tech Stack
+Python 3.11
+PyTorch
+Hugging Face Transformers
+sentence-transformers
+spaCy
+rank_bm25
+scikit-learn
+pandas
+numpy
+tqdm
+RAGAS
+FastAPI or Streamlit for optional demo
+Weights & Biases or MLflow for experiment tracking
+________________________________________
+Suggested Project Structure
+ragguard-lite/
+│
+├── data/
+│   ├── raw/
+│   ├── processed/
+│   └── splits/
+│
+├── src/
+│   ├── data/
+│   │   ├── load_ragtruth.py
+│   │   ├── load_attributionbench.py
+│   │   ├── load_minicheck.py
+│   │   └── normalize_schema.py
+│   │
+│   ├── decomposition/
+│   │   ├── sentence_splitter.py
+│   │   ├── complexity_detector.py
+│   │   ├── claim_decomposer.py
+│   │   └── decontextualizer.py
+│   │
+│   ├── retrieval/
+│   │   ├── evidence_splitter.py
+│   │   ├── bm25_retriever.py
+│   │   ├── dense_retriever.py
+│   │   └── hybrid_retriever.py
+│   │
+│   ├── verification/
+│   │   ├── nli_verifier.py
+│   │   ├── minicheck_verifier.py
+│   │   ├── llm_judge.py
+│   │   └── uncertainty_router.py
+│   │
+│   ├── risk/
+│   │   ├── heuristic_risk.py
+│   │   ├── calibrated_risk.py
+│   │   └── features.py
+│   │
+│   ├── evaluation/
+│   │   ├── claim_metrics.py
+│   │   ├── answer_metrics.py
+│   │   ├── retrieval_metrics.py
+│   │   └── cost_metrics.py
+│   │
+│   └── report/
+│       └── audit_report.py
+│
+├── experiments/
+│   ├── run_baselines.py
+│   ├── run_ablation.py
+│   └── run_main_experiment.py
+│
+├── notebooks/
+│   ├── dataset_exploration.ipynb
+│   ├── error_analysis.ipynb
+│   └── results_tables.ipynb
+│
+├── app/
+│   └── streamlit_demo.py
+│
+├── configs/
+│   ├── default.yaml
+│   ├── baselines.yaml
+│   └── ablation.yaml
+│
+└── README.md
+________________________________________
+17. Core Algorithms
+Algorithm 1: Selective Claim Decomposition
+Input: generated answer A
+Output: list of claims C
+
+1. Split A into sentences S.
+2. For each sentence s in S:
+      a. Compute complexity features:
+          - number of entities
+          - number of dates
+          - number of numbers
+          - number of conjunctions
+          - sentence length
+          - number of verbs
+      b. If complexity score < threshold:
+             add s as one claim
+         Else:
+             call claim decomposition prompt
+             add decomposed atomic claims
+3. Decontextualize all claims.
+4. Return claim list.
+________________________________________
+Algorithm 2: Evidence Retrieval
+Input: claim c, retrieved chunks R
+Output: top-k evidence spans E
+
+1. Split retrieved chunks into evidence spans.
+2. Compute BM25 score between claim and each span.
+3. Compute embedding similarity between claim and each span.
+4. Normalize both scores.
+5. Combine scores using weighted average.
+6. Return top-k spans.
+________________________________________
+Algorithm 3: Claim Verification
+Input: claim c, evidence spans E
+Output: label and confidence
+
+1. Concatenate top-k evidence spans.
+2. Run verifier model.
+3. If confidence is high:
+       return verifier label.
+4. If confidence is uncertain:
+       call LLM judge.
+5. Return final label and confidence.
+________________________________________
+Algorithm 4: Answer Risk Aggregation
+Input: claim labels and confidence scores
+Output: answer risk score
+
+1. Calculate unsupported claim ratio.
+2. Calculate contradicted claim ratio.
+3. Calculate partial support ratio.
+4. Calculate average uncertainty.
+5. Combine using weighted formula or trained logistic regression.
+6. Return risk score and risk level.
+________________________________________
+18. Experimental Plan
+Experiment 1: Claim-Level Verification
+Question:
+Does selective decomposition improve unsupported-claim detection?
+Compare:
+sentence-level verifier
+full decomposition
+selective decomposition
+Metrics:
+macro-F1
+unsupported F1
+supported F1
+Expected table:
+Method	Macro-F1	Unsupported F1	LLM Calls / Answer
+Sentence-level	-	-	0
+Full decomposition	-	-	high
+Selective decomposition	-	-	medium
+________________________________________
+Experiment 2: Evidence Retrieval
+Question:
+Does evidence-span retrieval improve claim verification?
+Compare:
+full context
+BM25 top-3
+dense top-3
+hybrid top-3
+Metrics:
+claim F1
+Recall@3
+MRR
+Expected table:
+Evidence Method	Recall@3	Claim Macro-F1
+Full context	-	-
+BM25	-	-
+Dense	-	-
+Hybrid	-	-
+________________________________________
+Experiment 3: Answer-Level Risk
+Question:
+Can claim labels predict hallucinated answers?
+Compare:
+whole-answer LLM judge
+RAGAS faithfulness
+unsupported claim ratio
+calibrated risk model
+Metrics:
+AUROC
+balanced accuracy
+F1
+calibration error
+Expected table:
+Method	AUROC	Balanced Accuracy	Calibration Error
+Whole-answer judge	-	-	-
+RAGAS faithfulness	-	-	-
+Unsupported ratio	-	-	-
+Calibrated risk model	-	-	-
+________________________________________
+Experiment 4: Cost Analysis
+Question:
+Does selective decomposition reduce cost?
+Compare:
+full decomposition
+selective decomposition
+sentence-level verification
+Metrics:
+claims per answer
+LLM calls per answer
+latency
+estimated cost
+Expected table:
+Method	Claims / Answer	LLM Calls / Answer	Latency	Cost
+Sentence-level	-	-	-	-
+Full decomposition	-	-	-	-
+Selective decomposition	-	-	-	-
+________________________________________
+19. Passing Gates
+Gate 1: Scope Gate
+Pass if:
+The project can be explained as:
+"Given a RAG answer and retrieved evidence, the system identifies unsupported claims and produces a risk score."
+Fail if:
+The project becomes a full RAG chatbot, search engine, or answer correction system.
+________________________________________
+Gate 2: Dataset Gate
+Pass if:
+At least 1,000 normalized claim-level examples are available.
+At least 1,000 answer-level examples are available.
+All examples follow one JSON schema.
+Fail if:
+Datasets cannot be loaded or labels cannot be mapped consistently.
+________________________________________
+Gate 3: Baseline Gate
+Pass if:
+At least four baselines run end-to-end.
+Metrics are generated automatically.
+Results are saved in CSV/JSON format.
+Minimum baselines:
+sentence-level verifier
+full decomposition
+RAGAS faithfulness
+MiniCheck or NLI verifier
+________________________________________
+Gate 4: Decomposition Gate
+Pass if manual inspection shows:
+At least 80% of extracted claims are understandable.
+At least 75% are atomic enough to verify.
+Less than 20% are duplicates or useless.
+Fail if:
+Claim extraction creates too many broken or meaningless claims.
+________________________________________
+Gate 5: Evidence Retrieval Gate
+Pass if:
+Top-3 evidence contains useful support for at least 75% of supported claims in a manually checked subset.
+Fail if:
+Evidence retrieval usually misses the relevant span.
+________________________________________
+Gate 6: Main Result Gate
+Pass if at least one is true:
+Selective decomposition improves unsupported F1 over sentence-level verification.
+Selective decomposition matches full decomposition with lower cost.
+Selective decomposition improves answer-level AUROC over unsupported-ratio baseline.
+Fail if:
+Selective decomposition is worse than all baselines and does not reduce cost.
+________________________________________
+Gate 7: Paper Gate
+Pass if the final paper contains:
+clear research question
+related work comparison
+method diagram
+dataset table
+main results table
+ablation table
+cost table
+error analysis
+limitations
+Fail if:
+The paper only describes a tool without controlled experiments.
+________________________________________
+20. Timeline
+Phase 1: Literature Review and Final Scope
+Duration:
+1 week
+Deliverables:
+literature matrix
+final research questions
+final dataset list
+method diagram
+Passing gate:
+Professor agrees this is not just another RAG chatbot.
+________________________________________
+Phase 2: Dataset Loading and Normalization
+Duration:
+1–2 weeks
+Deliverables:
+dataset loader scripts
+normalized JSON schema
+train/dev/test splits
+dataset statistics table
+Passing gate:
+All selected datasets load into one common format.
+________________________________________
+Phase 3: Baselines
+Duration:
+2 weeks
+Deliverables:
+sentence-level verifier
+RAGAS faithfulness baseline
+NLI verifier baseline
+MiniCheck baseline
+whole-answer LLM judge baseline
+Passing gate:
+Baseline result table is generated automatically.
+________________________________________
+Phase 4: Selective Decomposition Module
+Duration:
+2 weeks
+Deliverables:
+complexity detector
+claim decomposition prompt
+claim decontextualization prompt
+manual inspection report
+Passing gate:
+Claim quality is acceptable on manual inspection.
+________________________________________
+Phase 5: Evidence Retrieval Module
+Duration:
+1 week
+Deliverables:
+evidence span splitter
+BM25 retriever
+dense retriever
+hybrid retriever
+retrieval evaluation
+Passing gate:
+Top-3 evidence retrieval works on manually checked examples.
+________________________________________
+Phase 6: Claim Verification Module
+Duration:
+2 weeks
+Deliverables:
+NLI verifier
+MiniCheck verifier if available
+uncertainty-based LLM fallback
+claim-level metrics
+Passing gate:
+Claim-level results beat at least one strong baseline.
+________________________________________
+Phase 7: Risk Aggregation
+Duration:
+1 week
+Deliverables:
+heuristic risk score
+logistic regression risk model
+answer-level evaluation
+calibration plot
+Passing gate:
+Risk score produces useful answer-level AUROC.
+________________________________________
+Phase 8: Ablation and Error Analysis
+Duration:
+2 weeks
+Deliverables:
+ablation table
+cost table
+qualitative examples
+failure mode taxonomy
+Passing gate:
+At least one ablation clearly supports the contribution.
+________________________________________
+Phase 9: Demo System
+Duration:
+1 week
+Deliverables:
+Streamlit or FastAPI demo
+input form
+audit report display
+claim evidence table
+risk score visualization
+Passing gate:
+A user can paste question, chunks, and answer, then receive an audit report.
+________________________________________
+Phase 10: Paper Writing
+Duration:
+2–3 weeks
+Deliverables:
+full paper draft
+figures
+tables
+references
+appendix
+GitHub README
+Passing gate:
+Paper has enough experimental evidence to defend the contribution.
+________________________________________
+21. Paper Structure
+Abstract
+Briefly state:
+RAG systems still hallucinate despite retrieved context.
+Existing metrics often provide answer-level scores.
+This work proposes selective claim-level auditing.
+The method decomposes complex sentences into atomic claims, retrieves evidence spans, verifies support, and aggregates risk.
+Experiments compare sentence-level, full-decomposition, and selective-decomposition strategies.
+Results show whether selective decomposition improves hallucination detection or reduces cost.
+________________________________________
+1. Introduction
+Include:
+RAG motivation
+remaining hallucination problem
+why answer-level scores are not enough
+need for claim-level auditing
+summary of proposed method
+main contributions
+________________________________________
+2. Related Work
+Subsections:
+RAG evaluation frameworks
+Hallucination detection
+Attribution and citation verification
+Atomic fact evaluation
+Grounded claim verification
+Important related systems:
+RAGAS
+ARES
+RAGChecker
+RAGTruth
+AttributionBench
+MiniCheck
+FActScore
+SelfCheckGPT
+GaRAGe
+________________________________________
+3. Task Definition
+Define:
+input
+output
+claim
+evidence span
+support label
+answer risk score
+________________________________________
+4. Method
+Subsections:
+sentence segmentation
+selective claim decomposition
+claim decontextualization
+evidence span retrieval
+claim verification
+uncertainty fallback
+risk aggregation
+Include architecture diagram.
+________________________________________
+5. Experimental Setup
+Include:
+datasets
+baselines
+models
+implementation details
+metrics
+hardware
+________________________________________
+6. Results
+Include:
+claim-level results
+answer-level results
+evidence retrieval results
+cost results
+________________________________________
+7. Ablation Study
+Include:
+without decomposition
+full decomposition
+selective decomposition
+without hybrid retrieval
+without LLM fallback
+without risk calibration
+________________________________________
+8. Error Analysis
+Categories:
+bad claim splitting
+missing evidence
+retrieval failure
+NLI confusion
+partial support ambiguity
+multi-hop evidence
+numerical reasoning errors
+temporal mismatch
+________________________________________
+9. Limitations
+Be honest:
+The system depends on retrieved chunks.
+If the retriever misses evidence, the auditor may label correct claims as unsupported.
+Claim decomposition may introduce errors.
+Partial support is difficult to label consistently.
+The method is evaluated mostly in English.
+LLM fallback can introduce judge bias.
+The system audits answers but does not automatically correct them.
+________________________________________
+10. Conclusion
+State:
+This work presents a practical claim-level auditor for RAG answers.
+The key contribution is selective claim decomposition for efficient unsupported-claim detection.
+The system provides evidence-localized explanations and answer-level risk scores.
+________________________________________
+22. Figures to Include
+Figure 1: System Architecture
+Show:
+question + chunks + answer
+      ↓
+sentence segmentation
+      ↓
+selective claim decomposition
+      ↓
+evidence span retrieval
+      ↓
+claim verification
+      ↓
+risk aggregation
+      ↓
+audit report
+Figure 2: Selective Decomposition Example
+Show:
+simple sentence -> one claim
+complex sentence -> multiple claims
+Figure 3: Claim Evidence Matching
+Show:
+claim
+top evidence span
+support label
+Figure 4: Risk Report Example
+Show:
+claim table + risk score
+________________________________________
+23. Tables to Include
+Table 1: Related Work Comparison
+Columns:
+Method
+Reference-free?
+Claim-level?
+Evidence localization?
+Requires reference answer?
+Runtime usable?
+Cost-aware?
+Table 2: Dataset Statistics
+Columns:
+Dataset
+Task
+Number of examples
+Labels
+Used for
+Table 3: Main Claim-Level Results
+Columns:
+Method
+Macro-F1
+Unsupported F1
+Supported F1
+Cost
+Table 4: Answer-Level Results
+Columns:
+Method
+AUROC
+Balanced accuracy
+F1
+Calibration error
+Table 5: Ablation Study
+Columns:
+Variant
+Macro-F1
+Unsupported F1
+LLM calls
+Latency
+Table 6: Error Analysis
+Columns:
+Error type
+Frequency
+Example
+Cause
+Fix
+________________________________________
+24. MVP Build Order
+Build in this exact order:
+1.	Dataset loader.
+2.	Sentence-level verifier baseline.
+3.	Evidence span retriever.
+4.	Selective decomposition.
+5.	Claim verifier.
+6.	Risk score.
+7.	Baselines.
+8.	Ablations.
+9.	Error analysis.
+10.	Demo.
+Do not build the UI first. That is a common mistake. The paper depends on experiments, not the demo.
+________________________________________
+25. Minimum Successful Version
+The minimum successful project is:
+Input:
+question, retrieved chunks, generated answer
+
+Processing:
+sentence split
+selective claim decomposition
+hybrid evidence retrieval
+NLI or MiniCheck verification
+risk aggregation
+
+Output:
+claim labels
+evidence spans
+answer risk score
+
+Evaluation:
+AttributionBench + RAGTruth
+sentence-level baseline
+full decomposition baseline
+RAGAS baseline
+MiniCheck or NLI baseline
+ablation study
+cost analysis
+This is enough for a strong FYP and a possible workshop paper.
+________________________________________
+26. Stronger Version if Time Allows
+Add:
+partial support classification
+contradiction classification
+calibrated risk model
+human evaluation with two annotators
+GaRAGe evaluation
+domain-specific test set over university policies or company PDFs
+________________________________________
+27. Main Risks and Mitigations
+Risk 1: Claim decomposition is poor
+Mitigation:
+Use simple rule-based decomposition first.
+Only call LLM on complex sentences.
+Manually inspect 100 examples.
+Risk 2: Dataset labels do not map cleanly
+Mitigation:
+Keep AttributionBench for claim-level verification.
+Use RAGTruth mainly for answer-level and span-level evaluation.
+Document label mapping clearly.
+Risk 3: Verifier performs badly
+Mitigation:
+Compare multiple verifiers.
+Use NLI as baseline.
+Use MiniCheck if available.
+Use LLM fallback for uncertain cases.
+Risk 4: No improvement over full decomposition
+Mitigation:
+Frame contribution as cost-efficient approximation.
+Report performance-cost tradeoff.
+Risk 5: Professor says it is just a wrapper around LLMs
+Mitigation:
+Show controlled experiments.
+Show ablation studies.
+Show cost comparison.
+Show that the contribution is decomposition strategy and evidence-localized auditing, not just prompting.
+________________________________________
+28. Final Research Claim
+The final paper should make this claim:
+This work shows that selectively decomposing complex answer sentences into atomic claims enables practical claim-level hallucination auditing for RAG systems. Compared to sentence-level verification, it improves unsupported-claim localization. Compared to full decomposition, it reduces unnecessary LLM calls while maintaining similar verification quality.
+This is the cleanest defensible claim.
+________________________________________
+29. Suggested Final Paper Title
+Best academic title:
+Selective Claim Decomposition for Reference-Free Hallucination Auditing in Retrieval-Augmented Generation
+Best project/demo title:
+RAGGuard-Lite: A Claim-Level Auditor for Evidence-Grounded RAG Answers
+________________________________________
+30. Key References to Include
+Use these in the literature review:
+RAGAS: reference-free RAG evaluation
+ARES: automated RAG evaluation with lightweight judges
+RAGChecker: fine-grained RAG diagnosis
+RAGTruth: RAG hallucination corpus
+AttributionBench: attribution and citation support benchmark
+MiniCheck: efficient grounded fact-checking
+FActScore: atomic fact evaluation
+SelfCheckGPT: black-box hallucination detection
+GaRAGe: grounding annotations for RAG evaluation

@@ -1,0 +1,53 @@
+﻿# Python
+
+pycache/
+
+*.pyc
+
+*.pyo
+
+*.pyd
+
+# Virtual environments
+
+.venv/
+
+venv/
+
+env/
+
+# Data
+
+data/
+
+datasets/
+
+*.csv
+
+*.json
+
+*.parquet
+
+# Models
+
+*.pt
+
+*.pth
+
+*.bin
+
+*.ckpt
+
+# Outputs
+
+outputs/
+
+results/
+
+logs/
+
+# OS files
+
+.DS_Store
+
+Thumbs.db
